@@ -90,14 +90,14 @@ app.post('/api/visits', async (req, res) => {
     const formattedDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
     const record = {
-      serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
-      date_time: payload.date_time || payload.dateTime || formattedDate,
-      client_name: payload.client_name || payload.clientName || 'Unspecified Client',
-      salesperson: payload.salesperson || 'Unassigned',
+      serial: payload.serial || payload.serialNumber || `DS-${Date.now().toString().slice(-3)}`,
+      date_time: payload.date_time || payload.dateTime || payload.date || formattedDate,
+      client_name: payload.client_name || payload.clientName || payload['entry.1'] || 'Unspecified Client',
+      salesperson: payload.salesperson || payload.salesPerson || payload['entry.2'] || 'Unassigned',
       visit_type: payload.visit_type || payload.visitType || 'Physical',
-      deals: payload.deals || '—',
-      verified_address: payload.verified_address || payload.verifiedAddress || '',
-      locality: payload.locality || '',
+      deals: payload.deals || payload.dealSize || '—',
+      verified_address: payload.verified_address || payload.verifiedAddress || payload.address || '',
+      locality: payload.locality || payload.area || '',
       landmark: payload.landmark || '',
       city: payload.city || '',
       state: payload.state || '',
@@ -115,6 +115,7 @@ app.post('/api/visits', async (req, res) => {
 
     if (error) throw error;
 
+    console.log('Successfully inserted visit via /api/visits!');
     res.json({ success: true, data });
   } catch (err: any) {
     console.error('Error inserting visit:', err);
@@ -329,34 +330,34 @@ app.post('/api/form/submit', async (req, res) => {
       return;
     }
 
-    // 1. Unconditional save to Supabase 'visits' table
+    // 1. Unconditional save to Supabase 'visits' table with full fallback mapping
     if (supabase) {
       try {
         const formattedDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
         const record = {
-          serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
-          date_time: payload.date_time || payload.dateTime || formattedDate,
-          client_name: payload.clientName || payload['client_name'] || payload['entry.1'] || 'Form Client',
-          salesperson: payload.salesperson || payload['entry.2'] || 'Field Agent',
-          visit_type: payload.visitType || payload['visit_type'] || 'Physical',
-          deals: payload.deals || '—',
-          verified_address: payload.verifiedAddress || payload['verified_address'] || '',
-          locality: payload.locality || '',
+          serial: payload.serial || payload.serialNumber || `DS-${Date.now().toString().slice(-3)}`,
+          date_time: payload.date_time || payload.dateTime || payload.date || formattedDate,
+          client_name: payload.client_name || payload.clientName || payload['entry.1'] || 'Unspecified Client',
+          salesperson: payload.salesperson || payload.salesPerson || payload['entry.2'] || 'Unassigned',
+          visit_type: payload.visit_type || payload.visitType || 'Physical',
+          deals: payload.deals || payload.dealSize || '—',
+          verified_address: payload.verified_address || payload.verifiedAddress || payload.address || '',
+          locality: payload.locality || payload.area || '',
           landmark: payload.landmark || '',
           city: payload.city || '',
           state: payload.state || '',
           latitude: payload.latitude ? Number(payload.latitude) : null,
           longitude: payload.longitude ? Number(payload.longitude) : null,
-          sync_status: 'Verified & Synced',
+          sync_status: payload.sync_status || 'Verified & Synced',
           raw_data: payload,
-          created_at: new Date().toISOString()
+          created_at: payload.created_at || new Date().toISOString()
         };
 
         const { error: dbError } = await supabase.from('visits').insert([record]);
         if (dbError) {
           console.error('Supabase Insertion Error:', dbError);
         } else {
-          console.log('Successfully saved visit to Supabase!');
+          console.log('Successfully saved visit to Supabase via /api/form/submit!');
         }
       } catch (dbErr) {
         console.error('Failed auto-sync to Supabase:', dbErr);
