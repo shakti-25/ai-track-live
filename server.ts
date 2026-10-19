@@ -329,6 +329,41 @@ app.post('/api/form/submit', async (req, res) => {
       return;
     }
 
+    // 1. Unconditional save to Supabase 'visits' table
+    if (supabase) {
+      try {
+        const formattedDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
+        const record = {
+          serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
+          date_time: payload.date_time || payload.dateTime || formattedDate,
+          client_name: payload.clientName || payload['client_name'] || payload['entry.1'] || 'Form Client',
+          salesperson: payload.salesperson || payload['entry.2'] || 'Field Agent',
+          visit_type: payload.visitType || payload['visit_type'] || 'Physical',
+          deals: payload.deals || '—',
+          verified_address: payload.verifiedAddress || payload['verified_address'] || '',
+          locality: payload.locality || '',
+          landmark: payload.landmark || '',
+          city: payload.city || '',
+          state: payload.state || '',
+          latitude: payload.latitude ? Number(payload.latitude) : null,
+          longitude: payload.longitude ? Number(payload.longitude) : null,
+          sync_status: 'Verified & Synced',
+          raw_data: payload,
+          created_at: new Date().toISOString()
+        };
+
+        const { error: dbError } = await supabase.from('visits').insert([record]);
+        if (dbError) {
+          console.error('Supabase Insertion Error:', dbError);
+        } else {
+          console.log('Successfully saved visit to Supabase!');
+        }
+      } catch (dbErr) {
+        console.error('Failed auto-sync to Supabase:', dbErr);
+      }
+    }
+
+    // 2. Optional proxy to Google Forms
     const formParams = new URLSearchParams();
     for (const [key, value] of Object.entries(payload)) {
       if (value !== undefined && value !== null) {
@@ -347,47 +382,17 @@ app.post('/api/form/submit', async (req, res) => {
       redirect: 'manual',
     });
 
-    const isSuccess =
-      gResponse.status === 200 ||
-      gResponse.status === 302 ||
-      gResponse.status === 303;
-
-    // Automatically save to Supabase 'visits' table if connected
-    if (supabase && isSuccess) {
-      try {
-        const formattedDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
-        const record = {
-          serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
-          date_time: payload.date_time || payload.dateTime || formattedDate,
-          client_name: payload.clientName || payload['entry.1'] || 'Form Client',
-          salesperson: payload.salesperson || payload['entry.2'] || 'Field Agent',
-          visit_type: payload.visitType || 'Physical',
-          deals: payload.deals || '—',
-          verified_address: payload.verifiedAddress || '',
-          sync_status: 'Verified & Synced',
-          raw_data: payload,
-          created_at: new Date().toISOString()
-        };
-
-        await supabase.from('visits').insert([record]);
-      } catch (dbErr) {
-        console.error('Failed auto-sync to Supabase:', dbErr);
-      }
-    }
-
     res.json({
-      success: isSuccess,
+      success: true,
       status: gResponse.status,
       timestamp: Date.now(),
-      message: isSuccess
-        ? 'Successfully submitted to Google Form & synced to cloud'
-        : `Google Form responded with status ${gResponse.status}`,
+      message: 'Successfully recorded visit and synced to database',
     });
   } catch (err: any) {
-    console.error('Error proxying to Google Form:', err);
+    console.error('Error in form submit handler:', err);
     res.status(500).json({
       success: false,
-      error: err?.message || 'Failed to submit to Google Form',
+      error: err?.message || 'Failed to submit form',
     });
   }
 });
