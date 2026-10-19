@@ -54,7 +54,7 @@ app.get('/api/health', (req, res) => {
 });
 
 /**
- * Database Endpoint: Fetch all visits from Supabase
+ * Database Endpoint: Fetch all visits from Supabase 'visits' table
  */
 app.get('/api/visits', async (req, res) => {
   try {
@@ -63,26 +63,12 @@ app.get('/api/visits', async (req, res) => {
       return;
     }
 
-    // Targets 'salestrack_table' (or fallback to 'visits')
     const { data, error } = await supabase
-      .from('salestrack_table')
+      .from('visits')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) {
-      // Fallback query if table name is 'visits'
-      const fallback = await supabase
-        .from('visits')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (fallback.error) {
-        throw error;
-      }
-      res.json(fallback.data);
-      return;
-    }
-
+    if (error) throw error;
     res.json(data);
   } catch (err: any) {
     console.error('Error fetching visits:', err);
@@ -91,7 +77,7 @@ app.get('/api/visits', async (req, res) => {
 });
 
 /**
- * Database Endpoint: Insert new visit record into Supabase
+ * Database Endpoint: Insert new visit record into Supabase 'visits' table
  */
 app.post('/api/visits', async (req, res) => {
   try {
@@ -119,21 +105,12 @@ app.post('/api/visits', async (req, res) => {
       created_at: payload.created_at || new Date().toISOString()
     };
 
-    let { data, error } = await supabase
-      .from('salestrack_table')
+    const { data, error } = await supabase
+      .from('visits')
       .insert([record])
       .select();
 
-    if (error) {
-      // Fallback insertion into 'visits' table
-      const fallback = await supabase
-        .from('visits')
-        .insert([record])
-        .select();
-
-      if (fallback.error) throw error;
-      data = fallback.data;
-    }
+    if (error) throw error;
 
     res.json({ success: true, data });
   } catch (err: any) {
@@ -339,7 +316,7 @@ app.post('/api/maps/grounding', async (req, res) => {
 });
 
 /**
- * Proxy submission directly to Google Forms & sync automatically to Supabase
+ * Proxy submission directly to Google Forms & sync automatically to Supabase 'visits' table
  */
 app.post('/api/form/submit', async (req, res) => {
   try {
@@ -372,10 +349,11 @@ app.post('/api/form/submit', async (req, res) => {
       gResponse.status === 302 ||
       gResponse.status === 303;
 
-    // Automatically save to Supabase database if connected
+    // Automatically save to Supabase 'visits' table if connected
     if (supabase && isSuccess) {
       try {
         const record = {
+          serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
           client_name: payload.clientName || payload['entry.1'] || 'Form Client',
           salesperson: payload.salesperson || payload['entry.2'] || 'Field Agent',
           visit_type: payload.visitType || 'Physical',
@@ -386,7 +364,7 @@ app.post('/api/form/submit', async (req, res) => {
           created_at: new Date().toISOString()
         };
 
-        await supabase.from('salestrack_table').insert([record]);
+        await supabase.from('visits').insert([record]);
       } catch (dbErr) {
         console.error('Failed auto-sync to Supabase:', dbErr);
       }
