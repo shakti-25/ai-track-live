@@ -11,536 +11,611 @@ import type { GPSLocation, GroundingResult, DailySalesFormData, VisitRecord } fr
 import type { AuthSession } from './utils/auth.ts';
 import { canAccessAuthorisedFeatures } from './utils/auth.ts';
 import {
-  generateGPSAuditStamp,
-  formatGoogleMapsUrl,
-  getLocationDisplayName,
-  buildGoogleFormPayload,
+  generateGPSAuditStamp,
+  formatGoogleMapsUrl,
+  getLocationDisplayName,
+  buildGoogleFormPayload,
 } from './utils/formAudit.ts';
 import { Shield, Sparkles, MapPin, CheckCircle2, Lock, ArrowUpRight, AlertTriangle } from 'lucide-react';
 
+// Deterministic seed records for instant demonstration if local storage is fresh
+const SEED_VISITS: VisitRecord[] = [
+  {
+    id: 'seed-visit-1',
+    submittedAt: Date.now() - 3600000 * 2,
+    formData: {
+      salesPersonName: 'Nayan Sharma',
+      serialNo: 'DS-001',
+      date: new Date().toISOString().split('T')[0],
+      time: '11:15',
+      clientName: 'Tata Consultancy Services - BFSI Wing',
+      callMeet: 'No',
+      physicalMeet: 'YES',
+      followUpDate: new Date(Date.now() + 86400000 * 7).toISOString().split('T')[0],
+      scheduleDone: 'YES',
+      businessLumpsum: 'YES',
+      businessLumpsumAmount: '750000',
+      businessSip: 'YES',
+      businessSipAmount: '25000',
+      particularRemarks: 'In-person meeting with Treasury Head. Discussed corporate bond allocation.',
+    },
+    location: {
+      latitude: 28.62892,
+      longitude: 77.20653,
+      accuracy: 8.5,
+      timestamp: Date.now() - 3600000 * 2,
+      provider: 'browser_gps',
+    },
+    grounding: {
+      verifiedAddress: 'Barakhamba Road, Connaught Place, New Delhi, Delhi 110001',
+      locality: 'Connaught Place',
+      landmark: 'Statesman House',
+      description: 'Verified commercial office district along Barakhamba Road.',
+      places: [
+        {
+          title: 'Statesman House',
+          uri: 'https://maps.google.com/?q=28.62892,77.20653',
+        },
+      ],
+      source: 'gemini_maps_grounding',
+      fetchedAt: Date.now() - 3600000 * 2,
+    },
+    gpsAuditText:
+      'In-person meeting with Treasury Head.\n\n--- VERIFIED VISIT LOCATION AUDIT ---\nLocation Name: Barakhamba Road, Connaught Place, New Delhi\nLandmark: Statesman House\nGPS Verification: Certified Location (±9m)\nRecorded At: ' +
+      new Date().toLocaleDateString(),
+    googleMapsUrl: 'https://www.google.com/maps?q=28.628920,77.206530',
+    formStatus: 'synced_google_forms',
+  },
+  {
+    id: 'seed-visit-2',
+    submittedAt: Date.now() - 3600000 * 5,
+    formData: {
+      salesPersonName: 'Nayan Sharma',
+      serialNo: 'DS-002',
+      date: new Date().toISOString().split('T')[0],
+      time: '09:30',
+      clientName: 'Religare Broking Corp',
+      callMeet: 'YES',
+      physicalMeet: 'NO',
+      followUpDate: new Date(Date.now() + 86400000 * 5).toISOString().split('T')[0],
+      scheduleDone: 'YES',
+      businessLumpsum: 'NO',
+      businessLumpsumAmount: '',
+      businessSip: 'YES',
+      businessSipAmount: '15000',
+      particularRemarks: 'Introductory phone call with VP Investments. Scheduled follow-up presentation.',
+    },
+    location: {
+      latitude: 28.535517,
+      longitude: 77.391029,
+      accuracy: 15.0,
+      timestamp: Date.now() - 3600000 * 5,
+      provider: 'browser_gps',
+    },
+    grounding: {
+      verifiedAddress: 'Sector 62, Noida, Uttar Pradesh 201309',
+      locality: 'Sector 62',
+      landmark: 'Electronic City',
+      description: 'Verified commercial hub in Sector 62.',
+      places: [
+        {
+          title: 'Noida Sector 62 Hub',
+          uri: 'https://maps.google.com/?q=28.535517,77.391029',
+        },
+      ],
+      source: 'gemini_maps_grounding',
+      fetchedAt: Date.now() - 3600000 * 5,
+    },
+    gpsAuditText:
+      'Introductory phone call.\n\n--- VERIFIED VISIT LOCATION AUDIT ---\nLocation Name: Sector 62, Noida, Uttar Pradesh\nLandmark: Electronic City\nGPS Verification: Certified Location (±15m)',
+    googleMapsUrl: 'https://www.google.com/maps?q=28.535517,77.391029',
+    formStatus: 'synced_google_forms',
+  },
+];
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'form' | 'history' | 'analytics'>('form');
-  const [location, setLocation] = useState<GPSLocation | null>(null);
-  const [grounding, setGrounding] = useState<GroundingResult | null>(null);
-  const [isLocating, setIsLocating] = useState<boolean>(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [isGrounding, setIsGrounding] = useState<boolean>(false);
-  const [groundingError, setGroundingError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [lastSubmittedId, setLastSubmittedId] = useState<string | null>(null);
-  const [apiConnected, setApiConnected] = useState<boolean>(true);
+  const [activeTab, setActiveTab] = useState<'form' | 'history' | 'analytics'>('form');
+  const [location, setLocation] = useState<GPSLocation | null>(null);
+  const [grounding, setGrounding] = useState<GroundingResult | null>(null);
+  const [isLocating, setIsLocating] = useState<boolean>(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isGrounding, setIsGrounding] = useState<boolean>(false);
+  const [groundingError, setGroundingError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [lastSubmittedId, setLastSubmittedId] = useState<string | null>(null);
+  const [apiConnected, setApiConnected] = useState<boolean>(true);
 
-  // Modals
-  const [isGoogleSignInOpen, setIsGoogleSignInOpen] = useState(false);
-  const [isLocationEnforcementOpen, setIsLocationEnforcementOpen] = useState(false);
-  const [pendingFeatureName, setPendingFeatureName] = useState('Visit Records & Maps');
+  // Modals
+  const [isGoogleSignInOpen, setIsGoogleSignInOpen] = useState(false);
+  const [isLocationEnforcementOpen, setIsLocationEnforcementOpen] = useState(false);
+  const [pendingFeatureName, setPendingFeatureName] = useState('Visit Records & Maps');
 
-  // Authorised Personnel Session (Persisted)
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
-    try {
-      const stored = localStorage.getItem('salestrack_auth_session');
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (e) {
-      console.warn('Failed to parse auth session:', e);
-    }
-    return null;
-  });
+  // Authorised Personnel Session (Persisted)
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
+    try {
+      const stored = localStorage.getItem('salestrack_auth_session');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.warn('Failed to parse auth session:', e);
+    }
+    return null;
+  });
 
-  // Visit Records fetched directly from Supabase via /api/visits backend endpoint
-  const [records, setRecords] = useState<VisitRecord[]>([]);
+  // Visit Records in localStorage
+  const [records, setRecords] = useState<VisitRecord[]>(() => {
+    try {
+      const stored = localStorage.getItem('salestrack_gps_records');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.warn('Failed to parse stored visits:', e);
+    }
+    return SEED_VISITS;
+  });
 
-  const lastLocationRef = useRef<{ lat: number; lng: number } | null>(null);
+  const lastLocationRef = useRef<{ lat: number; lng: number } | null>(null);
 
-  // Fetch visit records from the backend database with flexible field extraction
-  const fetchVisitsFromDatabase = useCallback(async () => {
-    try {
-      const res = await fetch('/api/visits');
-      if (res.ok) {
-        const data = await res.json();
-        
-        const mappedRecords: VisitRecord[] = data.map((item: any) => {
-          // Extract nested raw payload if present
-          const raw = item.raw_data?.formData || item.raw_data || {};
+  // Check API health on mount
+  useEffect(() => {
+    fetch('/api/health')
+      .then((res) => res.json())
+      .then(() => setApiConnected(true))
+      .catch(() => setApiConnected(false));
+  }, []);
 
-          // Flexible fallbacks for Client Name and Salesperson
-          const clientName =
-            item.client_name ||
-            raw.clientName ||
-            raw.client_name ||
-            'Unspecified Client';
+  // Save records to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('salestrack_gps_records', JSON.stringify(records));
+    } catch (e) {
+      console.warn('Failed to save visits:', e);
+    }
+  }, [records]);
 
-          const salesPerson =
-            item.salesperson ||
-            raw.salesPersonName ||
-            raw.salesperson ||
-            raw.sales_person ||
-            'Unassigned';
+  // Save authSession to localStorage
+  useEffect(() => {
+    try {
+      if (authSession) {
+        localStorage.setItem('salestrack_auth_session', JSON.stringify(authSession));
+      } else {
+        localStorage.removeItem('salestrack_auth_session');
+      }
+    } catch (e) {
+      console.warn('Failed to save auth session:', e);
+    }
+  }, [authSession]);
 
-          const serialNo =
-            item.serial ||
-            raw.serialNo ||
-            raw.serial ||
-            'DS-000';
+  const isAuthorized = canAccessAuthorisedFeatures(authSession);
 
-          const dateTimeStr = item.date_time || raw.date_time || '';
-          const datePart = dateTimeStr.includes(' ')
-            ? dateTimeStr.split(' ')[0]
-            : (raw.date || new Date().toISOString().split('T')[0]);
-          const timePart = dateTimeStr.includes(' ')
-            ? dateTimeStr.split(' ')[1]
-            : (raw.time || '12:00');
+  /**
+   * Triggers Google Maps Grounding API with gemini-3.8-flash to resolve location name
+   */
+  const triggerMapsGrounding = useCallback(async (lat: number, lng: number, clientName?: string) => {
+    setIsGrounding(true);
+    setGroundingError(null);
 
-          return {
-            id: item.id ? String(item.id) : `visit-${serialNo}-${Date.now()}`,
-            submittedAt: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
-            formData: {
-              salesPersonName: salesPerson,
-              serialNo: serialNo,
-              date: datePart,
-              time: timePart,
-              clientName: clientName,
-              callMeet: raw.callMeet || 'No',
-              physicalMeet: item.visit_type === 'Physical' || raw.physicalMeet === 'YES' ? 'YES' : 'NO',
-              followUpDate: raw.followUpDate || '',
-              scheduleDone: raw.scheduleDone || 'YES',
-              businessLumpsum: raw.businessLumpsum || (item.deals && item.deals !== '—' ? 'YES' : 'NO'),
-              businessLumpsumAmount: raw.businessLumpsumAmount || '',
-              businessSip: raw.businessSip || 'NO',
-              businessSipAmount: raw.businessSipAmount || '',
-              particularRemarks: raw.particularRemarks || item.verified_address || '',
-            },
-            location: {
-              latitude: item.latitude || raw.latitude || 28.6139,
-              longitude: item.longitude || raw.longitude || 77.209,
-              accuracy: 10,
-              timestamp: Date.now(),
-              provider: 'browser_gps',
-            },
-            grounding: {
-              verifiedAddress: item.verified_address || raw.verifiedAddress || '',
-              locality: item.locality || raw.locality || '',
-              landmark: item.landmark || raw.landmark || '',
-              description: item.verified_address || '',
-              places: [],
-              source: 'gemini_maps_grounding',
-              fetchedAt: Date.now(),
-            },
-            gpsAuditText: item.verified_address ? `Verified Location: ${item.verified_address}` : '',
-            googleMapsUrl: item.latitude && item.longitude ? `https://www.google.com/maps?q=${item.latitude},${item.longitude}` : '',
-            formStatus: item.sync_status === 'Verified & Synced' ? 'synced_google_forms' : 'local_only',
-          };
-        });
+    try {
+      const res = await fetch('/api/maps/grounding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ latitude: lat, longitude: lng, clientName }),
+      });
 
-        setRecords(mappedRecords);
-      }
-    } catch (err) {
-      console.warn('Failed to fetch visits from database:', err);
-    }
-  }, []);
+      if (!res.ok) {
+        throw new Error(`Grounding API returned status ${res.status}`);
+      }
 
-  // Check API health and fetch records on mount
-  useEffect(() => {
-    fetch('/api/health')
-      .then((res) => res.json())
-      .then(() => setApiConnected(true))
-      .catch(() => setApiConnected(false));
+      const data: GroundingResult = await res.json();
+      setGrounding(data);
+    } catch (err: any) {
+      console.warn('Google Maps Grounding request failed:', err?.message);
+      setGroundingError('Google Maps Grounding preview is offline.');
+      setGrounding({
+        verifiedAddress: 'Raisina Hill, Kartavya Path, New Delhi, Delhi',
+        locality: 'New Delhi',
+        description: 'Verified field location in Central New Delhi.',
+        places: [
+          {
+            title: 'Central Government Complex',
+            uri: formatGoogleMapsUrl(lat, lng),
+          },
+        ],
+        source: 'coordinates_only',
+        fetchedAt: Date.now(),
+      });
+    } finally {
+      setIsGrounding(false);
+    }
+  }, []);
 
-    fetchVisitsFromDatabase();
-  }, [fetchVisitsFromDatabase]);
+  /**
+   * Acquire live GPS position from browser navigator.geolocation
+   * Ensures the user turns on location per company requirements.
+   */
+  const fetchCurrentLocation = useCallback(() => {
+    setIsLocating(true);
+    setLocationError(null);
 
-  // Save authSession to localStorage
-  useEffect(() => {
-    try {
-      if (authSession) {
-        localStorage.setItem('salestrack_auth_session', JSON.stringify(authSession));
-      } else {
-        localStorage.removeItem('salestrack_auth_session');
-      }
-    } catch (e) {
-      console.warn('Failed to save auth session:', e);
-    }
-  }, [authSession]);
+    if (!navigator.geolocation) {
+      setIsLocating(false);
+      setLocationError('Geolocation is not supported by your browser.');
+      setIsLocationEnforcementOpen(true);
+      return;
+    }
 
-  const isAuthorized = canAccessAuthorisedFeatures(authSession);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const newLoc: GPSLocation = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          altitude: pos.coords.altitude,
+          speed: pos.coords.speed,
+          heading: pos.coords.heading,
+          timestamp: pos.timestamp || Date.now(),
+          provider: 'browser_gps',
+        };
+        setLocation(newLoc);
+        setIsLocating(false);
+        setIsLocationEnforcementOpen(false);
+        lastLocationRef.current = { lat: newLoc.latitude, lng: newLoc.longitude };
+        triggerMapsGrounding(newLoc.latitude, newLoc.longitude);
+      },
+      (err) => {
+        console.warn('Geolocation error:', err.message);
+        setIsLocating(false);
+        setLocationError(
+          err.code === 1
+            ? 'Location permission was denied. Please turn on location in your browser to proceed.'
+            : 'Unable to acquire satellite GPS signal. Please turn on device location services.'
+        );
 
-  /**
-   * Triggers Google Maps Grounding API with gemini-3.8-flash to resolve location name
-   */
-  const triggerMapsGrounding = useCallback(async (lat: number, lng: number, clientName?: string) => {
-    setIsGrounding(true);
-    setGroundingError(null);
+        // Fallback default coordinates so UI remains responsive, but keep prompt active
+        if (!location) {
+          const fallbackLoc: GPSLocation = {
+            latitude: 28.613939,
+            longitude: 77.209021,
+            accuracy: 12,
+            timestamp: Date.now(),
+            provider: 'ip_approx',
+          };
+          setLocation(fallbackLoc);
+          triggerMapsGrounding(fallbackLoc.latitude, fallbackLoc.longitude);
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  }, [location, triggerMapsGrounding]);
 
-    try {
-      const res = await fetch('/api/maps/grounding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ latitude: lat, longitude: lng, clientName }),
-      });
+  // Initial fetch on mount
+  useEffect(() => {
+    fetchCurrentLocation();
+  }, []);
 
-      if (!res.ok) {
-        throw new Error(`Grounding API returned status ${res.status}`);
-      }
+  /**
+   * Handle manual coordinate adjustments from map or adjuster
+   */
+  const handleManualCoordinateSet = (lat: number, lng: number) => {
+    const manualLoc: GPSLocation = {
+      latitude: lat,
+      longitude: lng,
+      accuracy: 5.0,
+      timestamp: Date.now(),
+      provider: 'manual_pin',
+    };
+    setLocation(manualLoc);
+    setIsLocationEnforcementOpen(false);
+    triggerMapsGrounding(lat, lng);
+  };
 
-      const data: GroundingResult = await res.json();
-      setGrounding(data);
-    } catch (err: any) {
-      console.warn('Google Maps Grounding request failed:', err?.message);
-      setGroundingError('Google Maps Grounding preview is offline.');
-      setGrounding({
-        verifiedAddress: 'Raisina Hill, Kartavya Path, New Delhi, Delhi',
-        locality: 'New Delhi',
-        description: 'Verified field location in Central New Delhi.',
-        places: [
-          {
-            title: 'Central Government Complex',
-            uri: formatGoogleMapsUrl(lat, lng),
-          },
-        ],
-        source: 'coordinates_only',
-        fetchedAt: Date.now(),
-      });
-    } finally {
-      setIsGrounding(false);
-    }
-  }, []);
+  /**
+   * Tab Navigation with Authorization Gate
+   */
+  const handleTabSelect = (tab: 'form' | 'history' | 'analytics') => {
+    if (tab === 'form') {
+      setActiveTab('form');
+      return;
+    }
 
-  /**
-   * Acquire live GPS position from browser navigator.geolocation
-   */
-  const fetchCurrentLocation = useCallback(() => {
-    setIsLocating(true);
-    setLocationError(null);
+    // For history and analytics, check if authorized
+    if (!isAuthorized) {
+      const featureTitle =
+        tab === 'history' ? 'Visit Records & Maps' : 'Executive Performance Analytics';
+      setPendingFeatureName(featureTitle);
+      setActiveTab(tab);
+      setIsGoogleSignInOpen(true);
+    } else {
+      setActiveTab(tab);
+    }
+  };
 
-    if (!navigator.geolocation) {
-      setIsLocating(false);
-      setLocationError('Geolocation is not supported by your browser.');
-      setIsLocationEnforcementOpen(true);
-      return;
-    }
+  const handleLogout = () => {
+    setAuthSession(null);
+    setActiveTab('form');
+  };
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const newLoc: GPSLocation = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          altitude: pos.coords.altitude,
-          speed: pos.coords.speed,
-          heading: pos.coords.heading,
-          timestamp: pos.timestamp || Date.now(),
-          provider: 'browser_gps',
-        };
-        setLocation(newLoc);
-        setIsLocating(false);
-        setIsLocationEnforcementOpen(false);
-        lastLocationRef.current = { lat: newLoc.latitude, lng: newLoc.longitude };
-        triggerMapsGrounding(newLoc.latitude, newLoc.longitude);
-      },
-      (err) => {
-        console.warn('Geolocation error:', err.message);
-        setIsLocating(false);
-        setLocationError(
-          err.code === 1
-            ? 'Location permission was denied. Please turn on location in your browser to proceed.'
-            : 'Unable to acquire satellite GPS signal. Please turn on device location services.'
-        );
+  /**
+   * Handle Form Submission & Stamping
+   */
+  const handleFormSubmit = async (formData: DailySalesFormData): Promise<boolean> => {
+    if (!location) {
+      setIsLocationEnforcementOpen(true);
+      return false;
+    }
 
-        if (!location) {
-          const fallbackLoc: GPSLocation = {
-            latitude: 28.613939,
-            longitude: 77.209021,
-            accuracy: 12,
-            timestamp: Date.now(),
-            provider: 'ip_approx',
-          };
-          setLocation(fallbackLoc);
-          triggerMapsGrounding(fallbackLoc.latitude, fallbackLoc.longitude);
-        }
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      }
-    );
-  }, [location, triggerMapsGrounding]);
+    setIsSubmitting(true);
 
-  // Initial location fetch on mount
-  useEffect(() => {
-    fetchCurrentLocation();
-  }, [fetchCurrentLocation]);
+    try {
+      // 1. Build payload with location name and verified stamp
+      const payload = buildGoogleFormPayload(formData, location, grounding || undefined);
+      const auditText = generateGPSAuditStamp(location, grounding || undefined, formData.particularRemarks);
+      const mapsUrl = formatGoogleMapsUrl(location.latitude, location.longitude);
 
-  const handleManualCoordinateSet = (lat: number, lng: number) => {
-    const manualLoc: GPSLocation = {
-      latitude: lat,
-      longitude: lng,
-      accuracy: 5.0,
-      timestamp: Date.now(),
-      provider: 'manual_pin',
-    };
-    setLocation(manualLoc);
-    setIsLocationEnforcementOpen(false);
-    triggerMapsGrounding(lat, lng);
-  };
+      let syncStatus: VisitRecord['formStatus'] = 'local_only';
+      let errorMsg: string | undefined;
 
-  const handleTabSelect = (tab: 'form' | 'history' | 'analytics') => {
-    if (tab === 'form') {
-      setActiveTab('form');
-      return;
-    }
+      // 2. Submit to Google Form via server proxy API
+      try {
+        const response = await fetch('/api/form/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
 
-    if (!isAuthorized) {
-      const featureTitle =
-        tab === 'history' ? 'Visit Records & Maps' : 'Executive Performance Analytics';
-      setPendingFeatureName(featureTitle);
-      setActiveTab(tab);
-      setIsGoogleSignInOpen(true);
-    } else {
-      setActiveTab(tab);
-      fetchVisitsFromDatabase(); // Refresh data when opening history/analytics
-    }
-  };
+        if (response.ok) {
+          const resData = await response.json();
+          if (resData.success) {
+            syncStatus = 'synced_google_forms';
+          } else {
+            syncStatus = 'local_only';
+            errorMsg = resData.message;
+          }
+        } else {
+          syncStatus = 'local_only';
+          errorMsg = `HTTP ${response.status}`;
+        }
+      } catch (submitErr: any) {
+        console.warn('Google Form proxy submission failed:', submitErr);
+        syncStatus = 'local_only';
+        errorMsg = submitErr?.message;
+      }
 
-  const handleLogout = () => {
-    setAuthSession(null);
-    setActiveTab('form');
-  };
+      // 3. Save new visit record
+      const newRecord: VisitRecord = {
+        id: `visit-${Date.now()}`,
+        submittedAt: Date.now(),
+        formData: { ...formData },
+        location: { ...location },
+        grounding: grounding ? { ...grounding } : undefined,
+        gpsAuditText: auditText,
+        googleMapsUrl: mapsUrl,
+        formStatus: syncStatus,
+        errorMessage: errorMsg,
+      };
 
-  /**
-   * Handle Form Submission & Instant Synchronization to Supabase via Backend Proxy
-   */
-  const handleFormSubmit = async (formData: DailySalesFormData): Promise<boolean> => {
-    if (!location) {
-      setIsLocationEnforcementOpen(true);
-      return false;
-    }
+      setRecords((prev) => [newRecord, ...prev]);
+      setLastSubmittedId(newRecord.id);
 
-    setIsSubmitting(true);
+      return true;
+    } catch (err) {
+      console.error('Error during visit submission:', err);
+      return false;
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-    try {
-      const payload = buildGoogleFormPayload(formData, location, grounding || undefined);
-      
-      const response = await fetch('/api/form/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+  const handleDeleteRecord = (id: string) => {
+    setRecords((prev) => prev.filter((r) => r.id !== id));
+  };
 
-      if (response.ok) {
-        const resData = await response.json();
-        if (resData.success) {
-          setLastSubmittedId(payload.serial || 'DS-000');
-          // Instantly refresh records from the central database
-          await fetchVisitsFromDatabase();
-          return true;
-        }
-      }
-      return false;
-    } catch (err) {
-      console.error('Error during visit submission:', err);
-      return false;
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const handleClearAll = () => {
+    setRecords([]);
+  };
 
-  const handleDeleteRecord = (id: string) => {
-    setRecords((prev) => prev.filter((r) => r.id !== id));
-  };
+  const locationName = getLocationDisplayName(grounding, location);
 
-  const handleClearAll = () => {
-    setRecords([]);
-  };
+  return (
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
+      {/* Enterprise Corporate Menu Bar */}
+      <EnterpriseMenuBar
+        activeTab={activeTab}
+        onTabSelect={handleTabSelect}
+        location={location}
+        grounding={grounding}
+        historyCount={records.length}
+        isLocating={isLocating}
+        authSession={authSession}
+        onOpenGoogleSignIn={(feature) => {
+          setPendingFeatureName(feature || 'Authorised Manager Portal');
+          setIsGoogleSignInOpen(true);
+        }}
+        onOpenLocationPrompt={() => setIsLocationEnforcementOpen(true)}
+        onLogout={handleLogout}
+        apiConnected={apiConnected}
+      />
 
-  const locationName = getLocationDisplayName(grounding, location);
+      {/* Formal Website Hero / Location Announcement Masthead */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white border-b border-slate-800 py-6 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30 tracking-wide uppercase">
+                Official Operations Portal
+              </span>
+              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" />
+                <span>Verified Location: {locationName}</span>
+              </span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+              Daily Sales Scheduling & Field Visit Certification
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
+              Official enterprise web portal for daily sales scheduling. Captures verified location names, certified by Google Maps Grounding with automated GPS audit logging.
+            </p>
+          </div>
 
-  return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
-      <EnterpriseMenuBar
-        activeTab={activeTab}
-        onTabSelect={handleTabSelect}
-        location={location}
-        grounding={grounding}
-        historyCount={records.length}
-        isLocating={isLocating}
-        authSession={authSession}
-        onOpenGoogleSignIn={(feature) => {
-          setPendingFeatureName(feature || 'Authorised Manager Portal');
-          setIsGoogleSignInOpen(true);
-        }}
-        onOpenLocationPrompt={() => setIsLocationEnforcementOpen(true)}
-        onLogout={handleLogout}
-        apiConnected={apiConnected}
-      />
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <div className="bg-white/10 backdrop-blur-xs px-4 py-2.5 rounded-2xl border border-white/15 text-xs">
+              <span className="text-slate-400 block text-[10px] uppercase font-semibold">
+                Access Level
+              </span>
+              <span className="font-bold text-white flex items-center gap-1.5 mt-0.5">
+                {isAuthorized ? (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Authorised Manager</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Field Representative</span>
+                  </>
+                )}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
 
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white border-b border-slate-800 py-6 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30 tracking-wide uppercase">
-                Official Operations Portal
-              </span>
-              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" />
-                <span>Verified Location: {locationName}</span>
-              </span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-              Daily Sales Scheduling & Field Visit Certification
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
-              Official enterprise web portal for daily sales scheduling. Captures verified location names, certified by Google Maps Grounding with automated GPS audit logging.
-            </p>
-          </div>
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+        {/* Tab 1: Field Visit Entry (Public to sales reps) */}
+        {activeTab === 'form' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left Column: Location & Google Maps Grounding Showcase */}
+            <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-28">
+              <GPSPanel
+                location={location}
+                grounding={grounding}
+                isLocating={isLocating}
+                isGrounding={isGrounding}
+                onRefreshLocation={fetchCurrentLocation}
+                onManualCoordinateSet={handleManualCoordinateSet}
+                onOpenTurnOnPrompt={() => setIsLocationEnforcementOpen(true)}
+                groundingError={groundingError}
+              />
+            </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <div className="bg-white/10 backdrop-blur-xs px-4 py-2.5 rounded-2xl border border-white/15 text-xs">
-              <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                Access Level
-              </span>
-              <span className="font-bold text-white flex items-center gap-1.5 mt-0.5">
-                {isAuthorized ? (
-                  <>
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                    <span>Authorised Manager</span>
-                  </>
-                ) : (
-                  <>
-                    <Lock className="h-3.5 w-3.5 text-amber-400" />
-                    <span>Field Representative</span>
-                  </>
-                )}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+            {/* Right Column: Google Form Data Entry */}
+            <div className="lg:col-span-7">
+              <SalesSchedulingForm
+                location={location}
+                grounding={grounding}
+                onSubmit={handleFormSubmit}
+                isSubmitting={isSubmitting}
+                onTurnOnLocation={() => setIsLocationEnforcementOpen(true)}
+                lastSubmittedId={lastSubmittedId}
+              />
+            </div>
+          </div>
+        )}
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {activeTab === 'form' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-28">
-              <GPSPanel
-                location={location}
-                grounding={grounding}
-                isLocating={isLocating}
-                isGrounding={isGrounding}
-                onRefreshLocation={fetchCurrentLocation}
-                onManualCoordinateSet={handleManualCoordinateSet}
-                onOpenTurnOnPrompt={() => setIsLocationEnforcementOpen(true)}
-                groundingError={groundingError}
-              />
-            </div>
+        {/* Tab 2: Visit Records & Maps (Restricted to Authorised) */}
+        {activeTab === 'history' &&
+          (isAuthorized ? (
+            <VisitHistory
+              records={records}
+              onDeleteRecord={handleDeleteRecord}
+              onClearAll={handleClearAll}
+            />
+          ) : (
+            <LockedFeatureGate
+              featureName="Visit Records & Map Intelligence"
+              featureDescription="The complete visit audit log, location history, and interactive multi-visit map are restricted to authorised sales managers and supervisors."
+              onOpenAuthModal={() => {
+                setPendingFeatureName('Visit Records & Map Intelligence');
+                setIsGoogleSignInOpen(true);
+              }}
+              onBackToForm={() => setActiveTab('form')}
+            />
+          ))}
 
-            <div className="lg:col-span-7">
-              <SalesSchedulingForm
-                location={location}
-                grounding={grounding}
-                onSubmit={handleFormSubmit}
-                isSubmitting={isSubmitting}
-                onTurnOnLocation={() => setIsLocationEnforcementOpen(true)}
-                lastSubmittedId={lastSubmittedId}
-              />
-            </div>
-          </div>
-        )}
+        {/* Tab 3: Sales Performance Dashboard (Restricted to Authorised) */}
+        {activeTab === 'analytics' &&
+          (isAuthorized ? (
+            <StatsOverview records={records} />
+          ) : (
+            <LockedFeatureGate
+              featureName="Sales Performance Analytics"
+              featureDescription="Executive conversion summaries, Lumpsum and SIP deal metrics, and team-wide field scheduling KPIs are restricted to authorised management personnel."
+              onOpenAuthModal={() => {
+                setPendingFeatureName('Sales Performance Analytics');
+                setIsGoogleSignInOpen(true);
+              }}
+              onBackToForm={() => setActiveTab('form')}
+            />
+          ))}
+      </main>
 
-        {activeTab === 'history' &&
-          (isAuthorized ? (
-            <VisitHistory
-              records={records}
-              onDeleteRecord={handleDeleteRecord}
-              onClearAll={handleClearAll}
-            />
-          ) : (
-            <LockedFeatureGate
-              featureName="Visit Records & Map Intelligence"
-              featureDescription="The complete visit audit log, location history, and interactive multi-visit map are restricted to authorised sales managers and supervisors."
-              onOpenAuthModal={() => {
-                setPendingFeatureName('Visit Records & Map Intelligence');
-                setIsGoogleSignInOpen(true);
-              }}
-              onBackToForm={() => setActiveTab('form')}
-            />
-          ))}
+      {/* Google Sign In Modal */}
+      <GoogleSignInModal
+        isOpen={isGoogleSignInOpen}
+        onClose={() => setIsGoogleSignInOpen(false)}
+        onSuccess={(session) => {
+          setAuthSession(session);
+        }}
+        targetFeatureName={pendingFeatureName}
+      />
 
-        {activeTab === 'analytics' &&
-          (isAuthorized ? (
-            <StatsOverview records={records} />
-          ) : (
-            <LockedFeatureGate
-              featureName="Sales Performance Analytics"
-              featureDescription="Executive conversion summaries, Lumpsum and SIP deal metrics, and team-wide field scheduling KPIs are restricted to authorised management personnel."
-              onOpenAuthModal={() => {
-                setPendingFeatureName('Sales Performance Analytics');
-                setIsGoogleSignInOpen(true);
-              }}
-              onBackToForm={() => setActiveTab('form')}
-            />
-          ))}
-      </main>
+      {/* Mandatory Location Enforcement Modal */}
+      <LocationEnforcementModal
+        isOpen={isLocationEnforcementOpen}
+        onRetryLocation={fetchCurrentLocation}
+        isLocating={isLocating}
+        error={locationError}
+        onDismiss={() => setIsLocationEnforcementOpen(false)}
+      />
 
-      <GoogleSignInModal
-        isOpen={isGoogleSignInOpen}
-        onClose={() => setIsGoogleSignInOpen(false)}
-        onSuccess={(session) => {
-          setAuthSession(session);
-          fetchVisitsFromDatabase();
-        }}
-        targetFeatureName={pendingFeatureName}
-      />
+      {/* Formal Corporate Website Footer */}
+      <footer className="bg-white border-t border-slate-200 mt-12 py-8 text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold">
+                ST
+              </div>
+              <div>
+                <span className="font-bold text-slate-900 block">
+                  SalesTrack Enterprise Portal
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  Enterprise Field Sales Scheduling System
+                </span>
+              </div>
+            </div>
 
-      <LocationEnforcementModal
-        isOpen={isLocationEnforcementOpen}
-        onRetryLocation={fetchCurrentLocation}
-        isLocating={isLocating}
-        error={locationError}
-        onDismiss={() => setIsLocationEnforcementOpen(false)}
-      />
+            <div className="flex items-center gap-3 text-slate-600 flex-wrap">
+              <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                <span>Connected API: Google Maps Grounding & Geocoding</span>
+              </span>
+              <span className="flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
+                <Shield className="h-3.5 w-3.5 text-blue-600" />
+                <span>Google Sign-In Protected</span>
+              </span>
+            </div>
+          </div>
 
-      <footer className="bg-white border-t border-slate-200 mt-12 py-8 text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4 border-b border-slate-100 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold">
-                ST
-              </div>
-              <div>
-                <span className="font-bold text-slate-900 block">
-                  SalesTrack Enterprise Portal
-                </span>
-                <span className="text-[11px] text-slate-400">
-                  Enterprise Field Sales Scheduling System
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 text-slate-600 flex-wrap">
-              <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                <span>Connected API: Google Maps Grounding & Geocoding</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
-                <Shield className="h-3.5 w-3.5 text-blue-600" />
-                <span>Google Sign-In Protected</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-400">
-            <span>
-              &copy; {new Date().getFullYear()} SalesTrack Enterprise Portal. Field Sales Scheduling & GPS Telemetry System.
-            </span>
-            <div className="flex items-center gap-3">
-              <span>Verified Location Certification Active</span>
-              <span>&bull;</span>
-              <span>All rights reserved</span>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-400">
+            <span>
+              &copy; {new Date().getFullYear()} SalesTrack Enterprise Portal. Field Sales Scheduling & GPS Telemetry System.
+            </span>
+            <div className="flex items-center gap-3">
+              <span>Verified Location Certification Active</span>
+              <span>&bull;</span>
+              <span>All rights reserved</span>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
 }
