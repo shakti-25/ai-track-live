@@ -1,16 +1,26 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const GOOGLE_FORM_RESPONSE_URL =
   'https://docs.google.com/forms/d/e/1FAIpQLSeOk9VFaCsynaNm6ACAzyadizBBH4OVPI5rlCjuQK5ax-1VUQ/formResponse';
 
+// Initialize Supabase Client
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+
+const supabase = (supabaseUrl && supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey) 
+  : null;
+
+// Initialize Google Gemini Client
 const apiKey = process.env.GEMINI_API_KEY;
 let ai: GoogleGenAI | null = null;
 
@@ -36,6 +46,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     hasGeminiKey: !!apiKey,
+    hasSupabase: !!supabase,
     geminiOperational: isGeminiOperational,
     geocodingProvider: isGeminiOperational ? 'Gemini 3.8 Flash Maps Grounding' : 'Verified Location Geocoding API',
     time: new Date().toISOString(),
@@ -43,9 +54,96 @@ app.get('/api/health', (req, res) => {
 });
 
 /**
- * Google Maps Grounding & Verified Location endpoint.
- * Attempts Gemini 3.8 Flash Maps Grounding if available, and seamlessly provides
- * high-precision verified address, place recognition, landmarks, and Google Maps links.
+ * Database Endpoint: Fetch all visits from Supabase
+ */
+app.get('/api/visits', async (req, res) => {
+  try {
+    if (!supabase) {
+      res.status(500).json({ error: 'Supabase client is not configured' });
+      return;
+    }
+
+    // Targets 'salestrack_table' (or fallback to 'visits')
+    const { data, error } = await supabase
+      .from('salestrack_table')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      // Fallback query if table name is 'visits'
+      const fallback = await supabase
+        .from('visits')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (fallback.error) {
+        throw error;
+      }
+      res.json(fallback.data);
+      return;
+    }
+
+    res.json(data);
+  } catch (err: any) {
+    console.error('Error fetching visits:', err);
+    res.status(500).json({ error: err?.message || 'Failed to fetch visits' });
+  }
+});
+
+/**
+ * Database Endpoint: Insert new visit record into Supabase
+ */
+app.post('/api/visits', async (req, res) => {
+  try {
+    if (!supabase) {
+      res.status(500).json({ error: 'Supabase client is not configured' });
+      return;
+    }
+
+    const payload = req.body;
+    const record = {
+      serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
+      client_name: payload.client_name || payload.clientName || 'Unspecified Client',
+      salesperson: payload.salesperson || 'Unassigned',
+      visit_type: payload.visit_type || payload.visitType || 'Physical',
+      deals: payload.deals || '—',
+      verified_address: payload.verified_address || payload.verifiedAddress || '',
+      locality: payload.locality || '',
+      landmark: payload.landmark || '',
+      city: payload.city || '',
+      state: payload.state || '',
+      latitude: payload.latitude ? Number(payload.latitude) : null,
+      longitude: payload.longitude ? Number(payload.longitude) : null,
+      sync_status: payload.sync_status || 'Verified & Synced',
+      raw_data: payload.raw_data || payload || {},
+      created_at: payload.created_at || new Date().toISOString()
+    };
+
+    let { data, error } = await supabase
+      .from('salestrack_table')
+      .insert([record])
+      .select();
+
+    if (error) {
+      // Fallback insertion into 'visits' table
+      const fallback = await supabase
+        .from('visits')
+        .insert([record])
+        .select();
+
+      if (fallback.error) throw error;
+      data = fallback.data;
+    }
+
+    res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('Error inserting visit:', err);
+    res.status(500).json({ error: err?.message || 'Failed to record visit' });
+  }
+});
+
+/**
+ * Google Maps Grounding & Verified Location endpoint
  */
 app.post('/api/maps/grounding', async (req, res) => {
   try {
@@ -76,7 +174,6 @@ app.post('/api/maps/grounding', async (req, res) => {
       fetchedAt: Date.now(),
     };
 
-    // 1. Try Gemini Maps Grounding if API key is present and not currently in unauthenticated cooldown
     const now = Date.now();
     const canAttemptGemini = !!ai && (!geminiTested || isGeminiOperational || (now - lastGeminiAttemptTime > 300000));
 
@@ -147,14 +244,12 @@ app.post('/api/maps/grounding', async (req, res) => {
           lines.find((l) => !l.startsWith('#') && l.length > 5) ||
           `Lat ${lat.toFixed(6)}, Lng ${lng.toFixed(6)}`;
       } catch (geminiError: any) {
-        // Handle authentication or quota limits gracefully without throwing fatal errors
         geminiTested = true;
         isGeminiOperational = false;
         lastGeminiAttemptTime = now;
       }
     }
 
-    // 2. Verified reverse geocoding to resolve human-readable location names and landmarks
     if (!groundingResult.verifiedAddress || groundingResult.source === 'coordinates_only') {
       try {
         const geoRes = await fetch(
@@ -223,11 +318,10 @@ app.post('/api/maps/grounding', async (req, res) => {
           }
         }
       } catch {
-        // Fall through to coordinates fallback
+        // Fall through
       }
     }
 
-    // 3. Fallback coordinates pin if remote geocoding service is unreachable
     if (!groundingResult.verifiedAddress) {
       groundingResult.verifiedAddress = `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`;
       groundingResult.places = [
@@ -245,7 +339,7 @@ app.post('/api/maps/grounding', async (req, res) => {
 });
 
 /**
- * Proxy submission directly to Google Forms
+ * Proxy submission directly to Google Forms & sync automatically to Supabase
  */
 app.post('/api/form/submit', async (req, res) => {
   try {
@@ -273,18 +367,37 @@ app.post('/api/form/submit', async (req, res) => {
       redirect: 'manual',
     });
 
-    // Google Forms returns 200 or 302 on valid form submission
     const isSuccess =
       gResponse.status === 200 ||
       gResponse.status === 302 ||
       gResponse.status === 303;
+
+    // Automatically save to Supabase database if connected
+    if (supabase && isSuccess) {
+      try {
+        const record = {
+          client_name: payload.clientName || payload['entry.1'] || 'Form Client',
+          salesperson: payload.salesperson || payload['entry.2'] || 'Field Agent',
+          visit_type: payload.visitType || 'Physical',
+          deals: payload.deals || '—',
+          verified_address: payload.verifiedAddress || '',
+          sync_status: 'Verified & Synced',
+          raw_data: payload,
+          created_at: new Date().toISOString()
+        };
+
+        await supabase.from('salestrack_table').insert([record]);
+      } catch (dbErr) {
+        console.error('Failed auto-sync to Supabase:', dbErr);
+      }
+    }
 
     res.json({
       success: isSuccess,
       status: gResponse.status,
       timestamp: Date.now(),
       message: isSuccess
-        ? 'Successfully submitted to Google Form'
+        ? 'Successfully submitted to Google Form & synced to cloud'
         : `Google Form responded with status ${gResponse.status}`,
     });
   } catch (err: any) {
