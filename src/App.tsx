@@ -18,101 +18,6 @@ import {
 } from './utils/formAudit.ts';
 import { Shield, Sparkles, MapPin, CheckCircle2, Lock, ArrowUpRight, AlertTriangle } from 'lucide-react';
 
-// Deterministic seed records for instant demonstration if local storage is fresh
-const SEED_VISITS: VisitRecord[] = [
-  {
-    id: 'seed-visit-1',
-    submittedAt: Date.now() - 3600000 * 2,
-    formData: {
-      salesPersonName: 'Nayan Sharma',
-      serialNo: 'DS-001',
-      date: new Date().toISOString().split('T')[0],
-      time: '11:15',
-      clientName: 'Tata Consultancy Services - BFSI Wing',
-      callMeet: 'No',
-      physicalMeet: 'YES',
-      followUpDate: new Date(Date.now() + 86400000 * 7).toISOString().split('T')[0],
-      scheduleDone: 'YES',
-      businessLumpsum: 'YES',
-      businessLumpsumAmount: '750000',
-      businessSip: 'YES',
-      businessSipAmount: '25000',
-      particularRemarks: 'In-person meeting with Treasury Head. Discussed corporate bond allocation.',
-    },
-    location: {
-      latitude: 28.62892,
-      longitude: 77.20653,
-      accuracy: 8.5,
-      timestamp: Date.now() - 3600000 * 2,
-      provider: 'browser_gps',
-    },
-    grounding: {
-      verifiedAddress: 'Barakhamba Road, Connaught Place, New Delhi, Delhi 110001',
-      locality: 'Connaught Place',
-      landmark: 'Statesman House',
-      description: 'Verified commercial office district along Barakhamba Road.',
-      places: [
-        {
-          title: 'Statesman House',
-          uri: 'https://maps.google.com/?q=28.62892,77.20653',
-        },
-      ],
-      source: 'gemini_maps_grounding',
-      fetchedAt: Date.now() - 3600000 * 2,
-    },
-    gpsAuditText:
-      'In-person meeting with Treasury Head.\n\n--- VERIFIED VISIT LOCATION AUDIT ---\nLocation Name: Barakhamba Road, Connaught Place, New Delhi\nLandmark: Statesman House\nGPS Verification: Certified Location (±9m)\nRecorded At: ' +
-      new Date().toLocaleDateString(),
-    googleMapsUrl: 'https://www.google.com/maps?q=28.628920,77.206530',
-    formStatus: 'synced_google_forms',
-  },
-  {
-    id: 'seed-visit-2',
-    submittedAt: Date.now() - 3600000 * 5,
-    formData: {
-      salesPersonName: 'Nayan Sharma',
-      serialNo: 'DS-002',
-      date: new Date().toISOString().split('T')[0],
-      time: '09:30',
-      clientName: 'Religare Broking Corp',
-      callMeet: 'YES',
-      physicalMeet: 'NO',
-      followUpDate: new Date(Date.now() + 86400000 * 5).toISOString().split('T')[0],
-      scheduleDone: 'YES',
-      businessLumpsum: 'NO',
-      businessLumpsumAmount: '',
-      businessSip: 'YES',
-      businessSipAmount: '15000',
-      particularRemarks: 'Introductory phone call with VP Investments. Scheduled follow-up presentation.',
-    },
-    location: {
-      latitude: 28.535517,
-      longitude: 77.391029,
-      accuracy: 15.0,
-      timestamp: Date.now() - 3600000 * 5,
-      provider: 'browser_gps',
-    },
-    grounding: {
-      verifiedAddress: 'Sector 62, Noida, Uttar Pradesh 201309',
-      locality: 'Sector 62',
-      landmark: 'Electronic City',
-      description: 'Verified commercial hub in Sector 62.',
-      places: [
-        {
-          title: 'Noida Sector 62 Hub',
-          uri: 'https://maps.google.com/?q=28.535517,77.391029',
-        },
-      ],
-      source: 'gemini_maps_grounding',
-      fetchedAt: Date.now() - 3600000 * 5,
-    },
-    gpsAuditText:
-      'Introductory phone call.\n\n--- VERIFIED VISIT LOCATION AUDIT ---\nLocation Name: Sector 62, Noida, Uttar Pradesh\nLandmark: Electronic City\nGPS Verification: Certified Location (±15m)',
-    googleMapsUrl: 'https://www.google.com/maps?q=28.535517,77.391029',
-    formStatus: 'synced_google_forms',
-  },
-];
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<'form' | 'history' | 'analytics'>('form');
   const [location, setLocation] = useState<GPSLocation | null>(null);
@@ -143,37 +48,73 @@ export default function App() {
     return null;
   });
 
-  // Visit Records in localStorage
-  const [records, setRecords] = useState<VisitRecord[]>(() => {
-    try {
-      const stored = localStorage.getItem('salestrack_gps_records');
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (e) {
-      console.warn('Failed to parse stored visits:', e);
-    }
-    return SEED_VISITS;
-  });
+  // Visit Records fetched directly from Supabase via /api/visits backend endpoint
+  const [records, setRecords] = useState<VisitRecord[]>([]);
 
   const lastLocationRef = useRef<{ lat: number; lng: number } | null>(null);
 
-  // Check API health on mount
+  // Fetch visit records from the backend database
+  const fetchVisitsFromDatabase = useCallback(async () => {
+    try {
+      const res = await fetch('/api/visits');
+      if (res.ok) {
+        const data = await res.json();
+        // Map database records to frontend VisitRecord structure if necessary
+        const mappedRecords: VisitRecord[] = data.map((item: any) => ({
+          id: item.id ? String(item.id) : `visit-${item.serial || Date.now()}`,
+          submittedAt: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
+          formData: item.raw_data?.formData || {
+            salesPersonName: item.salesperson || 'Unassigned',
+            serialNo: item.serial || 'DS-000',
+            date: item.date_time ? item.date_time.split(' ')[0] : new Date().toISOString().split('T')[0],
+            time: item.date_time && item.date_time.includes(' ') ? item.date_time.split(' ')[1] : '12:00',
+            clientName: item.client_name || 'Unspecified Client',
+            callMeet: 'No',
+            physicalMeet: item.visit_type === 'Physical' ? 'YES' : 'NO',
+            followUpDate: '',
+            scheduleDone: 'YES',
+            businessLumpsum: item.deals && item.deals !== '—' ? 'YES' : 'NO',
+            businessLumpsumAmount: '',
+            businessSip: 'NO',
+            businessSipAmount: '',
+            particularRemarks: item.raw_data?.particularRemarks || item.verified_address || '',
+          },
+          location: {
+            latitude: item.latitude || 28.6139,
+            longitude: item.longitude || 77.209,
+            accuracy: 10,
+            timestamp: Date.now(),
+            provider: 'browser_gps',
+          },
+          grounding: {
+            verifiedAddress: item.verified_address || '',
+            locality: item.locality || '',
+            landmark: item.landmark || '',
+            description: item.verified_address || '',
+            places: [],
+            source: 'gemini_maps_grounding',
+            fetchedAt: Date.now(),
+          },
+          gpsAuditText: item.verified_address ? `Verified Location: ${item.verified_address}` : '',
+          googleMapsUrl: item.latitude && item.longitude ? `https://www.google.com/maps?q=${item.latitude},${item.longitude}` : '',
+          formStatus: item.sync_status === 'Verified & Synced' ? 'synced_google_forms' : 'local_only',
+        }));
+        setRecords(mappedRecords);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch visits from database:', err);
+    }
+  }, []);
+
+  // Check API health and fetch records on mount
   useEffect(() => {
     fetch('/api/health')
       .then((res) => res.json())
       .then(() => setApiConnected(true))
       .catch(() => setApiConnected(false));
-  }, []);
 
-  // Save records to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('salestrack_gps_records', JSON.stringify(records));
-    } catch (e) {
-      console.warn('Failed to save visits:', e);
-    }
-  }, [records]);
+    fetchVisitsFromDatabase();
+  }, [fetchVisitsFromDatabase]);
 
   // Save authSession to localStorage
   useEffect(() => {
@@ -233,7 +174,6 @@ export default function App() {
 
   /**
    * Acquire live GPS position from browser navigator.geolocation
-   * Ensures the user turns on location per company requirements.
    */
   const fetchCurrentLocation = useCallback(() => {
     setIsLocating(true);
@@ -273,7 +213,6 @@ export default function App() {
             : 'Unable to acquire satellite GPS signal. Please turn on device location services.'
         );
 
-        // Fallback default coordinates so UI remains responsive, but keep prompt active
         if (!location) {
           const fallbackLoc: GPSLocation = {
             latitude: 28.613939,
@@ -294,14 +233,11 @@ export default function App() {
     );
   }, [location, triggerMapsGrounding]);
 
-  // Initial fetch on mount
+  // Initial location fetch on mount
   useEffect(() => {
     fetchCurrentLocation();
-  }, []);
+  }, [fetchCurrentLocation]);
 
-  /**
-   * Handle manual coordinate adjustments from map or adjuster
-   */
   const handleManualCoordinateSet = (lat: number, lng: number) => {
     const manualLoc: GPSLocation = {
       latitude: lat,
@@ -315,16 +251,12 @@ export default function App() {
     triggerMapsGrounding(lat, lng);
   };
 
-  /**
-   * Tab Navigation with Authorization Gate
-   */
   const handleTabSelect = (tab: 'form' | 'history' | 'analytics') => {
     if (tab === 'form') {
       setActiveTab('form');
       return;
     }
 
-    // For history and analytics, check if authorized
     if (!isAuthorized) {
       const featureTitle =
         tab === 'history' ? 'Visit Records & Maps' : 'Executive Performance Analytics';
@@ -333,6 +265,7 @@ export default function App() {
       setIsGoogleSignInOpen(true);
     } else {
       setActiveTab(tab);
+      fetchVisitsFromDatabase(); // Refresh data when opening history/analytics
     }
   };
 
@@ -342,7 +275,7 @@ export default function App() {
   };
 
   /**
-   * Handle Form Submission & Stamping
+   * Handle Form Submission & Instant Synchronization to Supabase via Backend Proxy
    */
   const handleFormSubmit = async (formData: DailySalesFormData): Promise<boolean> => {
     if (!location) {
@@ -353,57 +286,24 @@ export default function App() {
     setIsSubmitting(true);
 
     try {
-      // 1. Build payload with location name and verified stamp
       const payload = buildGoogleFormPayload(formData, location, grounding || undefined);
-      const auditText = generateGPSAuditStamp(location, grounding || undefined, formData.particularRemarks);
-      const mapsUrl = formatGoogleMapsUrl(location.latitude, location.longitude);
+      
+      const response = await fetch('/api/form/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-      let syncStatus: VisitRecord['formStatus'] = 'local_only';
-      let errorMsg: string | undefined;
-
-      // 2. Submit to Google Form via server proxy API
-      try {
-        const response = await fetch('/api/form/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        if (response.ok) {
-          const resData = await response.json();
-          if (resData.success) {
-            syncStatus = 'synced_google_forms';
-          } else {
-            syncStatus = 'local_only';
-            errorMsg = resData.message;
-          }
-        } else {
-          syncStatus = 'local_only';
-          errorMsg = `HTTP ${response.status}`;
+      if (response.ok) {
+        const resData = await response.json();
+        if (resData.success) {
+          setLastSubmittedId(payload.serial || 'DS-000');
+          // Instantly refresh records from the central database
+          await fetchVisitsFromDatabase();
+          return true;
         }
-      } catch (submitErr: any) {
-        console.warn('Google Form proxy submission failed:', submitErr);
-        syncStatus = 'local_only';
-        errorMsg = submitErr?.message;
       }
-
-      // 3. Save new visit record
-      const newRecord: VisitRecord = {
-        id: `visit-${Date.now()}`,
-        submittedAt: Date.now(),
-        formData: { ...formData },
-        location: { ...location },
-        grounding: grounding ? { ...grounding } : undefined,
-        gpsAuditText: auditText,
-        googleMapsUrl: mapsUrl,
-        formStatus: syncStatus,
-        errorMessage: errorMsg,
-      };
-
-      setRecords((prev) => [newRecord, ...prev]);
-      setLastSubmittedId(newRecord.id);
-
-      return true;
+      return false;
     } catch (err) {
       console.error('Error during visit submission:', err);
       return false;
@@ -424,7 +324,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
-      {/* Enterprise Corporate Menu Bar */}
       <EnterpriseMenuBar
         activeTab={activeTab}
         onTabSelect={handleTabSelect}
@@ -442,7 +341,6 @@ export default function App() {
         apiConnected={apiConnected}
       />
 
-      {/* Formal Website Hero / Location Announcement Masthead */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white border-b border-slate-800 py-6 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -487,10 +385,8 @@ export default function App() {
       </div>
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {/* Tab 1: Field Visit Entry (Public to sales reps) */}
         {activeTab === 'form' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left Column: Location & Google Maps Grounding Showcase */}
             <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-28">
               <GPSPanel
                 location={location}
@@ -504,7 +400,6 @@ export default function App() {
               />
             </div>
 
-            {/* Right Column: Google Form Data Entry */}
             <div className="lg:col-span-7">
               <SalesSchedulingForm
                 location={location}
@@ -518,7 +413,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 2: Visit Records & Maps (Restricted to Authorised) */}
         {activeTab === 'history' &&
           (isAuthorized ? (
             <VisitHistory
@@ -538,7 +432,6 @@ export default function App() {
             />
           ))}
 
-        {/* Tab 3: Sales Performance Dashboard (Restricted to Authorised) */}
         {activeTab === 'analytics' &&
           (isAuthorized ? (
             <StatsOverview records={records} />
@@ -555,17 +448,16 @@ export default function App() {
           ))}
       </main>
 
-      {/* Google Sign In Modal */}
       <GoogleSignInModal
         isOpen={isGoogleSignInOpen}
         onClose={() => setIsGoogleSignInOpen(false)}
         onSuccess={(session) => {
           setAuthSession(session);
+          fetchVisitsFromDatabase();
         }}
         targetFeatureName={pendingFeatureName}
       />
 
-      {/* Mandatory Location Enforcement Modal */}
       <LocationEnforcementModal
         isOpen={isLocationEnforcementOpen}
         onRetryLocation={fetchCurrentLocation}
@@ -574,7 +466,6 @@ export default function App() {
         onDismiss={() => setIsLocationEnforcementOpen(false)}
       />
 
-      {/* Formal Corporate Website Footer */}
       <footer className="bg-white border-t border-slate-200 mt-12 py-8 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 border-b border-slate-100 pb-4">
