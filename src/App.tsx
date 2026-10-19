@@ -53,52 +53,86 @@ export default function App() {
 
   const lastLocationRef = useRef<{ lat: number; lng: number } | null>(null);
 
-  // Fetch visit records from the backend database
+  // Fetch visit records from the backend database with flexible field extraction
   const fetchVisitsFromDatabase = useCallback(async () => {
     try {
       const res = await fetch('/api/visits');
       if (res.ok) {
         const data = await res.json();
-        // Map database records to frontend VisitRecord structure if necessary
-        const mappedRecords: VisitRecord[] = data.map((item: any) => ({
-          id: item.id ? String(item.id) : `visit-${item.serial || Date.now()}`,
-          submittedAt: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
-          formData: item.raw_data?.formData || {
-            salesPersonName: item.salesperson || 'Unassigned',
-            serialNo: item.serial || 'DS-000',
-            date: item.date_time ? item.date_time.split(' ')[0] : new Date().toISOString().split('T')[0],
-            time: item.date_time && item.date_time.includes(' ') ? item.date_time.split(' ')[1] : '12:00',
-            clientName: item.client_name || 'Unspecified Client',
-            callMeet: 'No',
-            physicalMeet: item.visit_type === 'Physical' ? 'YES' : 'NO',
-            followUpDate: '',
-            scheduleDone: 'YES',
-            businessLumpsum: item.deals && item.deals !== '—' ? 'YES' : 'NO',
-            businessLumpsumAmount: '',
-            businessSip: 'NO',
-            businessSipAmount: '',
-            particularRemarks: item.raw_data?.particularRemarks || item.verified_address || '',
-          },
-          location: {
-            latitude: item.latitude || 28.6139,
-            longitude: item.longitude || 77.209,
-            accuracy: 10,
-            timestamp: Date.now(),
-            provider: 'browser_gps',
-          },
-          grounding: {
-            verifiedAddress: item.verified_address || '',
-            locality: item.locality || '',
-            landmark: item.landmark || '',
-            description: item.verified_address || '',
-            places: [],
-            source: 'gemini_maps_grounding',
-            fetchedAt: Date.now(),
-          },
-          gpsAuditText: item.verified_address ? `Verified Location: ${item.verified_address}` : '',
-          googleMapsUrl: item.latitude && item.longitude ? `https://www.google.com/maps?q=${item.latitude},${item.longitude}` : '',
-          formStatus: item.sync_status === 'Verified & Synced' ? 'synced_google_forms' : 'local_only',
-        }));
+        
+        const mappedRecords: VisitRecord[] = data.map((item: any) => {
+          // Extract nested raw payload if present
+          const raw = item.raw_data?.formData || item.raw_data || {};
+
+          // Flexible fallbacks for Client Name and Salesperson
+          const clientName =
+            item.client_name ||
+            raw.clientName ||
+            raw.client_name ||
+            'Unspecified Client';
+
+          const salesPerson =
+            item.salesperson ||
+            raw.salesPersonName ||
+            raw.salesperson ||
+            raw.sales_person ||
+            'Unassigned';
+
+          const serialNo =
+            item.serial ||
+            raw.serialNo ||
+            raw.serial ||
+            'DS-000';
+
+          const dateTimeStr = item.date_time || raw.date_time || '';
+          const datePart = dateTimeStr.includes(' ')
+            ? dateTimeStr.split(' ')[0]
+            : (raw.date || new Date().toISOString().split('T')[0]);
+          const timePart = dateTimeStr.includes(' ')
+            ? dateTimeStr.split(' ')[1]
+            : (raw.time || '12:00');
+
+          return {
+            id: item.id ? String(item.id) : `visit-${serialNo}-${Date.now()}`,
+            submittedAt: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
+            formData: {
+              salesPersonName: salesPerson,
+              serialNo: serialNo,
+              date: datePart,
+              time: timePart,
+              clientName: clientName,
+              callMeet: raw.callMeet || 'No',
+              physicalMeet: item.visit_type === 'Physical' || raw.physicalMeet === 'YES' ? 'YES' : 'NO',
+              followUpDate: raw.followUpDate || '',
+              scheduleDone: raw.scheduleDone || 'YES',
+              businessLumpsum: raw.businessLumpsum || (item.deals && item.deals !== '—' ? 'YES' : 'NO'),
+              businessLumpsumAmount: raw.businessLumpsumAmount || '',
+              businessSip: raw.businessSip || 'NO',
+              businessSipAmount: raw.businessSipAmount || '',
+              particularRemarks: raw.particularRemarks || item.verified_address || '',
+            },
+            location: {
+              latitude: item.latitude || raw.latitude || 28.6139,
+              longitude: item.longitude || raw.longitude || 77.209,
+              accuracy: 10,
+              timestamp: Date.now(),
+              provider: 'browser_gps',
+            },
+            grounding: {
+              verifiedAddress: item.verified_address || raw.verifiedAddress || '',
+              locality: item.locality || raw.locality || '',
+              landmark: item.landmark || raw.landmark || '',
+              description: item.verified_address || '',
+              places: [],
+              source: 'gemini_maps_grounding',
+              fetchedAt: Date.now(),
+            },
+            gpsAuditText: item.verified_address ? `Verified Location: ${item.verified_address}` : '',
+            googleMapsUrl: item.latitude && item.longitude ? `https://www.google.com/maps?q=${item.latitude},${item.longitude}` : '',
+            formStatus: item.sync_status === 'Verified & Synced' ? 'synced_google_forms' : 'local_only',
+          };
+        });
+
         setRecords(mappedRecords);
       }
     } catch (err) {
