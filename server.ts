@@ -87,8 +87,11 @@ app.post('/api/visits', async (req, res) => {
     }
 
     const payload = req.body;
+    const formattedDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
     const record = {
       serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
+      date_time: payload.date_time || payload.dateTime || formattedDate,
       client_name: payload.client_name || payload.clientName || 'Unspecified Client',
       salesperson: payload.salesperson || 'Unassigned',
       visit_type: payload.visit_type || payload.visitType || 'Physical',
@@ -352,8 +355,10 @@ app.post('/api/form/submit', async (req, res) => {
     // Automatically save to Supabase 'visits' table if connected
     if (supabase && isSuccess) {
       try {
+        const formattedDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
         const record = {
           serial: payload.serial || `DS-${Date.now().toString().slice(-3)}`,
+          date_time: payload.date_time || payload.dateTime || formattedDate,
           client_name: payload.clientName || payload['entry.1'] || 'Form Client',
           salesperson: payload.salesperson || payload['entry.2'] || 'Field Agent',
           visit_type: payload.visitType || 'Physical',
